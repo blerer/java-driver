@@ -119,14 +119,14 @@ class DynamicConnectionPool extends HostConnectionPool {
                     forceClose(connections);
                 } else {
                     logger.trace("Created connection pool to host {}", host);
-                    phase = Phase.READY;
+                    phase.compareAndSet(Phase.INITIALIZING, Phase.READY);
                     initFuture.set(null);
                 }
             }
 
             @Override
             public void onFailure(Throwable t) {
-                phase = Phase.INIT_FAILED;
+                phase.compareAndSet(Phase.INITIALIZING, Phase.INIT_FAILED);
                 forceClose(connections);
                 initFuture.setException(t);
             }
@@ -147,10 +147,10 @@ class DynamicConnectionPool extends HostConnectionPool {
 
     @Override
     public Connection borrowConnection(long timeout, TimeUnit unit) throws ConnectionException, TimeoutException {
-        if (phase == Phase.INITIALIZING)
+        if (phase.get() == Phase.INITIALIZING)
             throw new ConnectionException(host.getSocketAddress(), "Pool is initializing.");
 
-        if (phase != Phase.READY)
+        if (phase.get() != Phase.READY)
             // Note: throwing a ConnectionException is probably fine in practice as it will trigger the creation of a new host.
             // That being said, maybe having a specific exception could be cleaner.
             throw new ConnectionException(host.getSocketAddress(), "Pool is " + phase);
@@ -380,7 +380,7 @@ class DynamicConnectionPool extends HostConnectionPool {
                 break;
         }
 
-        if (phase != Phase.READY) {
+        if (phase.get() != Phase.READY) {
             open.decrementAndGet();
             return false;
         }
@@ -397,7 +397,7 @@ class DynamicConnectionPool extends HostConnectionPool {
             newConnection.state.compareAndSet(RESURRECTING, OPEN); // no-op if it was already OPEN
 
             // We might have raced with pool shutdown since the last check; ensure the connection gets closed in case the pool did not do it.
-            if (phase != Phase.READY && !newConnection.isClosed()) {
+            if (isClosed() && !newConnection.isClosed()) {
                 close(newConnection);
                 open.decrementAndGet();
                 return false;
@@ -534,13 +534,10 @@ class DynamicConnectionPool extends HostConnectionPool {
     }
 
     protected CloseFuture makeCloseFuture() {
-        phase = Phase.CLOSING;
-
         // Wake up all threads that wait
         signalAllAvailableConnection();
 
-        CloseFuture future = new CloseFuture.Forwarding(discardAvailableConnections());
-        return future;
+        return new CloseFuture.Forwarding(discardAvailableConnections());
     }
 
     private List<CloseFuture> discardAvailableConnections() {
