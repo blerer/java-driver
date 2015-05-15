@@ -125,10 +125,8 @@ class SingleConnectionPool extends HostConnectionPool {
 
     @Override
     public Connection borrowConnection(long timeout, TimeUnit unit) throws ConnectionException, TimeoutException {
-        if (phase.get() == Phase.INITIALIZING)
-            throw new ConnectionException(host.getSocketAddress(), "Pool is initializing.");
-
-        if (phase.get() != Phase.READY)
+        Phase phase = this.phase.get();
+        if (phase != Phase.READY)
             // Note: throwing a ConnectionException is probably fine in practice as it will trigger the creation of a new host.
             // That being said, maybe having a specific exception could be cleaner.
             throw new ConnectionException(host.getSocketAddress(), "Pool is " + phase);
